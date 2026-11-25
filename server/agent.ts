@@ -133,11 +133,11 @@ const TRANSCRIPT_JSON_SCHEMA = {
   required: ["estimatedDurationSec", "segments"],
 };
 
-async function transcribeAndDiarizeAudio(
+export async function transcribeAudioBufferToText(
   audioBuffer: Buffer,
   mimeType: string,
-  meta: CallMeta
-): Promise<{ segments: TranscriptSegment[]; durationSeconds: number }> {
+  contextHint?: string
+): Promise<string> {
   const ai = getClient();
   const ext = mimeType.includes("mp4")
     ? "mp4"
@@ -163,7 +163,6 @@ async function transcribeAndDiarizeAudio(
     });
     uploadedName = uploaded.name;
 
-    // Wait briefly if file is still processing
     let activeFile = uploaded;
     for (let attempt = 0; attempt < 20 && activeFile.state === "PROCESSING"; attempt++) {
       await new Promise((r) => setTimeout(r, 1500));
@@ -172,24 +171,21 @@ async function transcribeAndDiarizeAudio(
       }
     }
 
+    const prompt = contextHint
+      ? `Transcribe this audio faithfully with speaker labels and [MM:SS] timestamps. Context: ${contextHint}`
+      : "Transcribe this audio faithfully with speaker labels and [MM:SS] timestamps.";
+
     let rawTranscript = "";
     try {
       const transcribeResp = await ai.models.generateContent({
         model: config.models.transcribe,
-        contents: [
-          activeFile,
-          `Transcribe this startup/investor audio faithfully with speaker labels and timestamps. Known context: Company "${meta.companyName}", Investor speaker "${meta.investorSpeakerLabel}", Founder(s) ${meta.founderNames.join(", ") || "unknown"}.`,
-        ],
+        contents: [activeFile, prompt],
       });
       rawTranscript = transcribeResp.text?.trim() || "";
     } catch {
-      // Fallback to multimodal critic model if dedicated transcribe model is unavailable on this key
       const fallbackResp = await ai.models.generateContent({
         model: config.models.critic,
-        contents: [
-          activeFile,
-          `Create an exact, verbatim diarized transcript with [MM:SS] timestamps and speaker turns. Known Investor: "${meta.investorSpeakerLabel}". Company: "${meta.companyName}". Founder(s): ${meta.founderNames.join(", ") || "Founder"}.`,
-        ],
+        contents: [activeFile, prompt],
       });
       rawTranscript = fallbackResp.text?.trim() || "";
     }
@@ -197,12 +193,7 @@ async function transcribeAndDiarizeAudio(
     if (!rawTranscript) {
       throw new Error("Audio transcription returned empty text.");
     }
-
-    const structured = await structureTranscriptText(rawTranscript, meta);
-    return {
-      segments: structured.segments,
-      durationSeconds: structured.estimatedDurationSec,
-    };
+    return rawTranscript;
   } finally {
     try {
       if (fs.existsSync(tempPath)) fs.unlinkSync(tempPath);
@@ -217,6 +208,34 @@ async function transcribeAndDiarizeAudio(
       }
     }
   }
+}
+
+async function transcribeAndDiarizeAudio(
+  audioBuffer: Buffer,
+  mimeType: string,
+  meta: CallMeta
+): Promise<{ segments: TranscriptSegment[]; durationSeconds: number }> {
+  const hint = `Company "${meta.companyName}", Investor speaker "${meta.investorSpeakerLabel}", Founder(s) ${meta.founderNames.join(", ") || "unknown"}.`;
+  const rawTranscript = await transcribeAudioBufferToText(audioBuffer, mimeType, hint);
+  const structured = await structureTranscriptText(rawTranscript, meta);
+  return {
+    segments: structured.segments,
+    durationSeconds: structured.estimatedDurationSec,
+  };
+}
+
+export async function retranscribeExistingCall(callId: string): Promise<TranscriptSegment[]> {
+  const call = getCall(callId);
+  if (!call) throw new Error("Call not found.");
+  const audio = readDecryptedAudioForCall(callId);
+  if (!audio) throw new Error("No encrypted audio recording exists for this call.");
+  const { segments, durationSeconds } = await transcribeAndDiarizeAudio(
+    audio.buffer,
+    audio.mimeType,
+    call.meta
+  );
+  saveCallResults(callId, { transcript: segments, durationSeconds });
+  return segments;
 }
 
 async function structureTranscriptText(

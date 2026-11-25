@@ -1,5 +1,13 @@
-import React, { useEffect, useRef, useState } from "react";
-import { CheckCircle2, Mic, Pause, Play, Shield, Square } from "lucide-react";
+import React, { useEffect, useMemo, useRef, useState } from "react";
+import {
+  CheckCircle2,
+  FileText,
+  Mic,
+  Pause,
+  Play,
+  Shield,
+  Square,
+} from "lucide-react";
 import { api } from "../api";
 import type { RoomPublicMeta } from "../types";
 import { formatTime } from "./CallRibbon";
@@ -22,6 +30,21 @@ export const FounderPitchRoom: React.FC<FounderPitchRoomProps> = ({
   >("idle");
   const [elapsedSec, setElapsedSec] = useState(0);
   const [recordedBlob, setRecordedBlob] = useState<Blob | null>(null);
+  const [transcribing, setTranscribing] = useState(false);
+  const [transcriptDraft, setTranscriptDraft] = useState("");
+  const [hasTranscriptDraft, setHasTranscriptDraft] = useState(false);
+  const [includeAudioOnSubmit, setIncludeAudioOnSubmit] = useState(true);
+
+  const previewUrl = useMemo(
+    () => (recordedBlob ? URL.createObjectURL(recordedBlob) : null),
+    [recordedBlob]
+  );
+
+  useEffect(() => {
+    return () => {
+      if (previewUrl) URL.revokeObjectURL(previewUrl);
+    };
+  }, [previewUrl]);
 
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
   const recorderRef = useRef<MediaRecorder | null>(null);
@@ -169,15 +192,45 @@ export const FounderPitchRoom: React.FC<FounderPitchRoomProps> = ({
     }
   }
 
-  async function submitRecording() {
+  async function transcribeRecording() {
     if (!recordedBlob) return;
-    setRecordingState("uploading");
+    setTranscribing(true);
     setError(null);
     try {
       const fd = new FormData();
       fd.append("token", token);
       fd.append("consentAccepted", String(consentChecked));
       fd.append("audio", recordedBlob, `pitch_${roomId}.webm`);
+      const res = await api.transcribeRoomAudio(roomId, fd);
+      setTranscriptDraft(res.transcriptText);
+      setHasTranscriptDraft(true);
+    } catch (err) {
+      setError(
+        err instanceof Error ? err.message : "Failed to transcribe recording."
+      );
+    } finally {
+      setTranscribing(false);
+    }
+  }
+
+  async function submitRecording() {
+    if (!recordedBlob && !transcriptDraft.trim()) return;
+    if (!includeAudioOnSubmit && !transcriptDraft.trim()) {
+      setError("Enter or transcribe text before submitting without audio.");
+      return;
+    }
+    setRecordingState("uploading");
+    setError(null);
+    try {
+      const fd = new FormData();
+      fd.append("token", token);
+      fd.append("consentAccepted", String(consentChecked));
+      if (includeAudioOnSubmit && recordedBlob) {
+        fd.append("audio", recordedBlob, `pitch_${roomId}.webm`);
+      }
+      if (transcriptDraft.trim()) {
+        fd.append("transcriptText", transcriptDraft.trim());
+      }
       await api.submitRoomAudio(roomId, fd);
       setRecordingState("submitted");
     } catch (err) {
@@ -351,26 +404,91 @@ export const FounderPitchRoom: React.FC<FounderPitchRoomProps> = ({
                 )}
 
                 {recordingState === "review" && (
-                  <>
-                    <button
-                      type="button"
-                      onClick={() => void submitRecording()}
-                      className="px-5 py-3 bg-[var(--sage)] text-white text-xs font-mono-tabular uppercase tracking-widest cursor-pointer"
-                    >
-                      Encrypt &amp; Submit Pitch
-                    </button>
-                    <button
-                      type="button"
-                      onClick={() => {
-                        setRecordedBlob(null);
-                        setRecordingState("idle");
-                        setElapsedSec(0);
-                      }}
-                      className="px-4 py-3 hairline-box text-xs font-mono-tabular uppercase tracking-wider cursor-pointer"
-                    >
-                      Re-Record
-                    </button>
-                  </>
+                  <div className="w-full space-y-4">
+                    {previewUrl && (
+                      <audio controls src={previewUrl} className="w-full h-9" />
+                    )}
+
+                    <div className="flex flex-wrap items-center gap-2.5">
+                      <button
+                        type="button"
+                        disabled={transcribing}
+                        onClick={() => void transcribeRecording()}
+                        className="px-4 py-2.5 hairline-box bg-[var(--bg-paper)] text-xs font-mono-tabular uppercase tracking-wider flex items-center gap-2 hover:bg-[var(--bg-muted)] disabled:opacity-50 cursor-pointer"
+                      >
+                        <FileText className="w-3.5 h-3.5 text-[var(--vermilion)]" />
+                        {transcribing
+                          ? "Transcribing…"
+                          : hasTranscriptDraft
+                            ? "Re-Transcribe Audio"
+                            : "Convert Recording to Text"}
+                      </button>
+
+                      {!hasTranscriptDraft && (
+                        <button
+                          type="button"
+                          onClick={() => setHasTranscriptDraft(true)}
+                          className="px-3.5 py-2.5 hairline-box text-xs font-mono-tabular uppercase tracking-wider text-[var(--ink-secondary)] hover:text-[var(--ink-primary)] cursor-pointer"
+                        >
+                          Write / Edit Text Manually
+                        </button>
+                      )}
+                    </div>
+
+                    {hasTranscriptDraft && (
+                      <div className="p-3.5 hairline-box bg-[var(--bg-paper)] space-y-2.5">
+                        <div className="flex items-center justify-between">
+                          <span className="font-mono-tabular text-[10px] uppercase tracking-widest text-[var(--ink-secondary)]">
+                            Editable Pitch Transcript
+                          </span>
+                          <label className="flex items-center gap-1.5 text-[11px] font-mono-tabular text-[var(--ink-secondary)] cursor-pointer">
+                            <input
+                              type="checkbox"
+                              checked={includeAudioOnSubmit}
+                              onChange={(e) =>
+                                setIncludeAudioOnSubmit(e.target.checked)
+                              }
+                              className="accent-[var(--vermilion)]"
+                            />
+                            Also send audio recording
+                          </label>
+                        </div>
+                        <textarea
+                          rows={6}
+                          value={transcriptDraft}
+                          onChange={(e) => setTranscriptDraft(e.target.value)}
+                          placeholder="Review, correct acronyms/numbers, or edit your spoken pitch here…"
+                          className="w-full px-3 py-2 bg-[var(--bg-elevated)] hairline-box text-xs font-mono-tabular leading-relaxed focus:outline-none focus:border-[var(--ink-primary)]"
+                        />
+                      </div>
+                    )}
+
+                    <div className="flex flex-wrap items-center gap-3 pt-1">
+                      <button
+                        type="button"
+                        onClick={() => void submitRecording()}
+                        className="px-5 py-3 bg-[var(--sage)] text-white text-xs font-mono-tabular uppercase tracking-widest cursor-pointer"
+                      >
+                        {includeAudioOnSubmit
+                          ? "Encrypt & Submit Pitch"
+                          : "Encrypt & Submit Text Only"}
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setRecordedBlob(null);
+                          setTranscriptDraft("");
+                          setHasTranscriptDraft(false);
+                          setIncludeAudioOnSubmit(true);
+                          setRecordingState("idle");
+                          setElapsedSec(0);
+                        }}
+                        className="px-4 py-3 hairline-box text-xs font-mono-tabular uppercase tracking-wider cursor-pointer"
+                      >
+                        Re-Record
+                      </button>
+                    </div>
+                  </div>
                 )}
               </div>
             </div>

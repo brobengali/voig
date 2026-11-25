@@ -246,6 +246,31 @@ export function storeEncryptedAudioForCall(
   ).run(id, mimeType, new Date().toISOString(), id);
 }
 
+export function storeRoomPendingTranscript(roomId: string, transcriptText: string): void {
+  const row = db
+    .prepare("SELECT room_key_wrapped_server FROM calls WHERE id = ?")
+    .get(roomId) as { room_key_wrapped_server: string | null } | undefined;
+  if (!row?.room_key_wrapped_server) {
+    throw new Error("Missing room encryption key.");
+  }
+  const serverWrapKey = deriveSubKey(config.roomTokenSecret, `room-wrap:${roomId}`);
+  const encKey = decryptBuffer(
+    Buffer.from(row.room_key_wrapped_server, "base64"),
+    serverWrapKey
+  );
+  const encrypted = encryptJson({ text: transcriptText }, encKey);
+  db.prepare(
+    "UPDATE calls SET room_pending_transcript = ?, updated_at = ? WHERE id = ?"
+  ).run(encrypted, new Date().toISOString(), roomId);
+}
+
+export function updateCallTranscript(id: string, segments: TranscriptSegment[]): void {
+  const dek = getActiveDek();
+  db.prepare(
+    "UPDATE calls SET encrypted_transcript = ?, updated_at = ? WHERE id = ?"
+  ).run(encryptJson(segments, dek), new Date().toISOString(), id);
+}
+
 export function readDecryptedAudioForCall(id: string): { buffer: Buffer; mimeType: string } | null {
   const dek = getActiveDek();
   const row = db
@@ -348,9 +373,33 @@ function hydrateCallRow(row: CallRow, dek: Buffer): DecryptedCallRecord {
     }
   }
 
-  const transcript = row.encrypted_transcript
+  let transcript = row.encrypted_transcript
     ? decryptJson<TranscriptSegment[]>(row.encrypted_transcript, dek)
     : null;
+
+  if (!transcript && row.room_pending_transcript && row.room_key_wrapped_dek) {
+    try {
+      const roomKey = decryptBuffer(Buffer.from(row.room_key_wrapped_dek, "base64"), dek);
+      const pending = decryptJson<{ text: string }>(row.room_pending_transcript, roomKey);
+      if (pending.text?.trim()) {
+        transcript = [
+          {
+            id: "raw-input",
+            speaker: "Founder Pitch",
+            role: "founder",
+            startSec: 0,
+            endSec: 0,
+            text: pending.text.trim(),
+          },
+        ];
+        db.prepare(
+          "UPDATE calls SET encrypted_transcript = ?, room_pending_transcript = NULL WHERE id = ?"
+        ).run(encryptJson(transcript, dek), row.id);
+      }
+    } catch {
+      // ignore malformed pending transcript
+    }
+  }
   const analysis = row.encrypted_analysis
     ? decryptJson<CallAnalysis>(row.encrypted_analysis, dek)
     : null;

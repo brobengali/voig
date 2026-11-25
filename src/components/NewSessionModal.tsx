@@ -1,5 +1,5 @@
 import React, { useRef, useState } from "react";
-import { Check, Copy, Mic, Radio, Upload, X } from "lucide-react";
+import { Check, Copy, FileText, Mic, Radio, Upload, X } from "lucide-react";
 import { api } from "../api";
 import type { CallObjective, ThesisProfile } from "../types";
 import { formatTime } from "./CallRibbon";
@@ -38,6 +38,9 @@ export const NewSessionModal: React.FC<NewSessionModalProps> = ({
   const [deckFile, setDeckFile] = useState<File | null>(null);
   const [audioFile, setAudioFile] = useState<File | null>(null);
   const [transcriptText, setTranscriptText] = useState("");
+  const [transcribingPreview, setTranscribingPreview] = useState(false);
+  const [showTranscriptEditor, setShowTranscriptEditor] = useState(false);
+  const [keepAudioWithEditedText, setKeepAudioWithEditedText] = useState(true);
 
   // Live Tab + Mic capture state
   const [capturing, setCapturing] = useState(false);
@@ -107,6 +110,37 @@ export const NewSessionModal: React.FC<NewSessionModalProps> = ({
     }
   }
 
+  async function handleTranscribePreview() {
+    const sourceAudio =
+      ingestMethod === "live_tab_mic" ? capturedBlob : audioFile;
+    if (!sourceAudio) return;
+    setTranscribingPreview(true);
+    setError(null);
+    try {
+      const fd = new FormData();
+      fd.append(
+        "audio",
+        sourceAudio,
+        audioFile?.name || `capture_${Date.now()}.webm`
+      );
+      if (companyName.trim()) {
+        fd.append(
+          "contextHint",
+          `Company "${companyName.trim()}", Investor "${investorSpeakerLabel}".`
+        );
+      }
+      const res = await api.transcribePreview(fd);
+      setTranscriptText(res.transcriptText);
+      setShowTranscriptEditor(true);
+    } catch (err) {
+      setError(
+        err instanceof Error ? err.message : "Failed to transcribe recording."
+      );
+    } finally {
+      setTranscribingPreview(false);
+    }
+  }
+
   function stopTabAndMicCapture() {
     if (captureRecRef.current && captureRecRef.current.state !== "inactive") {
       captureRecRef.current.stop();
@@ -167,14 +201,18 @@ export const NewSessionModal: React.FC<NewSessionModalProps> = ({
             deckNotes,
             investorSpeakerLabel,
             transcriptText:
-              ingestMethod === "transcript" ? transcriptText : undefined,
+              ingestMethod === "transcript" || transcriptText.trim()
+                ? transcriptText
+                : undefined,
           })
         );
 
         if (deckFile) fd.append("deck", deckFile);
-        if (ingestMethod === "upload" && audioFile) {
+        const includeAudio =
+          ingestMethod === "transcript" ? false : keepAudioWithEditedText;
+        if (includeAudio && ingestMethod === "upload" && audioFile) {
           fd.append("audio", audioFile);
-        } else if (ingestMethod === "live_tab_mic" && capturedBlob) {
+        } else if (includeAudio && ingestMethod === "live_tab_mic" && capturedBlob) {
           fd.append("audio", capturedBlob, `live_${Date.now()}.webm`);
         }
 
@@ -497,6 +535,52 @@ export const NewSessionModal: React.FC<NewSessionModalProps> = ({
                     className="w-full px-3 py-2 bg-[var(--bg-paper)] hairline-box text-xs font-mono-tabular focus:outline-none"
                   />
                 )}
+
+                {ingestMethod !== "transcript" &&
+                  ((ingestMethod === "upload" && audioFile) ||
+                    (ingestMethod === "live_tab_mic" &&
+                      capturedBlob &&
+                      !capturing)) && (
+                    <div className="pt-2 hairline-t space-y-2.5">
+                      <div className="flex flex-wrap items-center gap-2">
+                        <button
+                          type="button"
+                          disabled={transcribingPreview}
+                          onClick={() => void handleTranscribePreview()}
+                          className="px-3 py-1.5 hairline-box bg-[var(--bg-paper)] text-[11px] font-mono-tabular uppercase tracking-wider flex items-center gap-1.5 hover:bg-[var(--bg-muted)] disabled:opacity-50 cursor-pointer"
+                        >
+                          <FileText className="w-3.5 h-3.5 text-[var(--vermilion)]" />
+                          {transcribingPreview
+                            ? "Transcribing…"
+                            : showTranscriptEditor
+                              ? "Re-Transcribe Audio"
+                              : "Transcribe & Edit Before Critique"}
+                        </button>
+                        {showTranscriptEditor && (
+                          <label className="flex items-center gap-1.5 text-[11px] font-mono-tabular text-[var(--ink-secondary)] cursor-pointer">
+                            <input
+                              type="checkbox"
+                              checked={keepAudioWithEditedText}
+                              onChange={(e) =>
+                                setKeepAudioWithEditedText(e.target.checked)
+                              }
+                              className="accent-[var(--vermilion)]"
+                            />
+                            Keep audio in vault
+                          </label>
+                        )}
+                      </div>
+                      {showTranscriptEditor && (
+                        <textarea
+                          rows={5}
+                          value={transcriptText}
+                          onChange={(e) => setTranscriptText(e.target.value)}
+                          placeholder="Review or edit the transcribed text before running partner critics…"
+                          className="w-full px-3 py-2 bg-[var(--bg-paper)] hairline-box text-xs font-mono-tabular leading-relaxed focus:outline-none"
+                        />
+                      )}
+                    </div>
+                  )}
               </div>
             )}
 

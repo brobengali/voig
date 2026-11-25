@@ -59,6 +59,27 @@ export const api = {
     requestJson<{ ok: boolean }>(`/api/calls/${encodeURIComponent(id)}/reanalyze`, {
       method: "POST",
     }),
+  retranscribeCall: (id: string) =>
+    requestJson<{ transcript: import("./types").TranscriptSegment[] }>(
+      `/api/calls/${encodeURIComponent(id)}/retranscribe`,
+      { method: "POST" }
+    ),
+  updateTranscript: (
+    id: string,
+    segments: import("./types").TranscriptSegment[]
+  ) =>
+    requestJson<{ ok: boolean }>(
+      `/api/calls/${encodeURIComponent(id)}/transcript`,
+      {
+        method: "PATCH",
+        body: JSON.stringify({ segments }),
+      }
+    ),
+  transcribePreview: (formData: FormData) =>
+    requestJson<{ transcriptText: string }>("/api/calls/transcribe-preview", {
+      method: "POST",
+      body: formData,
+    }),
   calibrateCritique: (
     callId: string,
     critiqueId: string,
@@ -95,6 +116,14 @@ export const api = {
       method: "POST",
       body: JSON.stringify({ token, state }),
     }),
+  transcribeRoomAudio: (roomId: string, formData: FormData) =>
+    requestJson<{ transcriptText: string }>(
+      `/api/rooms/${encodeURIComponent(roomId)}/transcribe`,
+      {
+        method: "POST",
+        body: formData,
+      }
+    ),
   submitRoomAudio: (roomId: string, formData: FormData) =>
     requestJson<{ ok: boolean; submitted: boolean }>(
       `/api/rooms/${encodeURIComponent(roomId)}/submit`,

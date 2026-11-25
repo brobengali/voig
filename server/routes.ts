@@ -7,7 +7,12 @@ import { z } from "zod";
 import { config } from "./config.js";
 import { signToken, verifyToken } from "./crypto.js";
 import { broadcastVaultEvent, registerSseClient } from "./events.js";
-import { extractDeckSummary, processCallPipeline } from "./agent.js";
+import {
+  extractDeckSummary,
+  processCallPipeline,
+  retranscribeExistingCall,
+  transcribeAudioBufferToText,
+} from "./agent.js";
 import { CallObjectiveSchema } from "./types.js";
 import {
   computeBlindspotLedger,
@@ -27,8 +32,10 @@ import {
   saveThesisProfile,
   setCalibration,
   storeEncryptedAudioForCall,
+  storeRoomPendingTranscript,
   unlockVault,
   updateCallStatus,
+  updateCallTranscript,
 } from "./vault.js";
 
 const SESSION_COOKIE = "redline_session";
@@ -287,6 +294,83 @@ export function createApiRouter(): Router {
     void processCallPipeline(id);
     res.json({ ok: true });
   });
+
+  router.post("/calls/:id/retranscribe", requireInvestorAuth, async (req, res) => {
+    try {
+      const id = String(req.params.id);
+      const transcript = await retranscribeExistingCall(id);
+      res.json({ transcript });
+    } catch (err) {
+      res.status(400).json({
+        error: err instanceof Error ? err.message : "Re-transcription failed.",
+      });
+    }
+  });
+
+  router.patch("/calls/:id/transcript", requireInvestorAuth, (req, res) => {
+    const id = String(req.params.id);
+    const call = getCall(id);
+    if (!call) {
+      res.status(404).json({ error: "Call not found." });
+      return;
+    }
+    const parsed = z
+      .object({
+        segments: z
+          .array(
+            z.object({
+              id: z.string().min(1).max(60),
+              speaker: z.string().min(1).max(80),
+              role: z.enum(["investor", "founder", "other"]),
+              startSec: z.number().nonnegative(),
+              endSec: z.number().nonnegative(),
+              text: z.string().min(1).max(20000),
+            })
+          )
+          .min(1)
+          .max(2000),
+      })
+      .safeParse(req.body);
+    if (!parsed.success) {
+      res.status(400).json({ error: "Invalid transcript segments payload." });
+      return;
+    }
+    updateCallTranscript(id, parsed.data.segments);
+    res.json({ ok: true });
+  });
+
+  router.post(
+    "/calls/transcribe-preview",
+    requireInvestorAuth,
+    upload.single("audio"),
+    async (req, res) => {
+      try {
+        if (!req.file) {
+          res.status(400).json({ error: "Audio recording is required." });
+          return;
+        }
+        const mime = cleanMime(req.file.mimetype);
+        if (!ALLOWED_AUDIO_MIMES.has(mime)) {
+          res.status(400).json({ error: `Unsupported media type: ${mime}` });
+          return;
+        }
+        const hint =
+          typeof req.body?.contextHint === "string"
+            ? req.body.contextHint.slice(0, 300)
+            : undefined;
+        const transcriptText = await transcribeAudioBufferToText(
+          req.file.buffer,
+          mime,
+          hint
+        );
+        res.json({ transcriptText });
+      } catch (err) {
+        res.status(400).json({
+          error: err instanceof Error ? err.message : "Transcription failed.",
+        });
+      }
+    }
+  );
 
   router.post("/calls/:id/calibrate", requireInvestorAuth, (req, res) => {
     const id = String(req.params.id);
@@ -563,6 +647,50 @@ export function createApiRouter(): Router {
   });
 
   router.post(
+    "/rooms/:roomId/transcribe",
+    roomLimiter,
+    upload.single("audio"),
+    async (req, res) => {
+      try {
+        const roomId = String(req.params.roomId);
+        const token = req.body?.token ?? req.query.token;
+        if (!verifyRoomToken(roomId, token)) {
+          res.status(403).json({ error: "Invalid or expired Pitch Room token." });
+          return;
+        }
+        if (req.body?.consentAccepted !== "true") {
+          res.status(400).json({ error: "Explicit recording consent is required." });
+          return;
+        }
+        if (!req.file) {
+          res.status(400).json({ error: "Audio recording is required." });
+          return;
+        }
+        const mime = cleanMime(req.file.mimetype);
+        if (!ALLOWED_AUDIO_MIMES.has(mime)) {
+          res.status(400).json({ error: `Unsupported media type: ${mime}` });
+          return;
+        }
+        const info = getRoomPublicInfo(roomId);
+        if (!info) {
+          res.status(404).json({ error: "Pitch Room not found." });
+          return;
+        }
+        const transcriptText = await transcribeAudioBufferToText(
+          req.file.buffer,
+          mime,
+          `Founder pitch for "${info.publicMeta.companyName}".`
+        );
+        res.json({ transcriptText });
+      } catch (err) {
+        res.status(400).json({
+          error: err instanceof Error ? err.message : "Transcription failed.",
+        });
+      }
+    }
+  );
+
+  router.post(
     "/rooms/:roomId/submit",
     roomLimiter,
     upload.single("audio"),
@@ -577,17 +705,28 @@ export function createApiRouter(): Router {
         res.status(400).json({ error: "Explicit recording consent is required." });
         return;
       }
-      if (!req.file) {
-        res.status(400).json({ error: "Audio recording file is required." });
-        return;
-      }
-      const mime = cleanMime(req.file.mimetype);
-      if (!ALLOWED_AUDIO_MIMES.has(mime)) {
-        res.status(400).json({ error: `Unsupported media type: ${mime}` });
+      const editedText =
+        typeof req.body?.transcriptText === "string"
+          ? req.body.transcriptText.trim().slice(0, 250000)
+          : "";
+
+      if (!req.file && !editedText) {
+        res.status(400).json({ error: "Provide an audio recording or confirmed transcript text." });
         return;
       }
 
-      storeEncryptedAudioForCall(roomId, req.file.buffer, mime, true);
+      if (req.file) {
+        const mime = cleanMime(req.file.mimetype);
+        if (!ALLOWED_AUDIO_MIMES.has(mime)) {
+          res.status(400).json({ error: `Unsupported media type: ${mime}` });
+          return;
+        }
+        storeEncryptedAudioForCall(roomId, req.file.buffer, mime, true);
+      }
+
+      if (editedText) {
+        storeRoomPendingTranscript(roomId, editedText);
+      }
 
       if (isVaultUnlocked()) {
         updateCallStatus(roomId, { roomStatus: "submitted", status: "queued" });

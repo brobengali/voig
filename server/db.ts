@@ -43,6 +43,7 @@ db.exec(`
     audio_mime TEXT,
     room_key_wrapped_dek TEXT,
     room_key_wrapped_server TEXT,
+    room_pending_transcript TEXT,
     error_message TEXT
   );
 
@@ -56,6 +57,12 @@ db.exec(`
     FOREIGN KEY(call_id) REFERENCES calls(id) ON DELETE CASCADE
   );
 `);
+
+try {
+  db.exec("ALTER TABLE calls ADD COLUMN room_pending_transcript TEXT");
+} catch {
+  // column already exists
+}
 
 export interface VaultMetaRow {
   id: number;
@@ -80,6 +87,7 @@ export interface CallRow {
   audio_mime: string | null;
   room_key_wrapped_dek: string | null;
   room_key_wrapped_server: string | null;
+  room_pending_transcript: string | null;
   error_message: string | null;
 }
 

@@ -3,12 +3,13 @@ import {
   AlertCircle,
   Check,
   Copy,
+  Edit3,
   Link2,
   RefreshCw,
   Trash2,
 } from "lucide-react";
 import { api } from "../api";
-import type { CallRecord, CritiqueItem } from "../types";
+import type { CallRecord, CritiqueItem, TranscriptSegment } from "../types";
 import { CallRibbon, formatTime } from "./CallRibbon";
 
 interface PartnerReviewProps {
@@ -51,6 +52,11 @@ export const PartnerReview: React.FC<PartnerReviewProps> = ({
   const [copiedId, setCopiedId] = useState<string | null>(null);
   const [currentTimeSec, setCurrentTimeSec] = useState(0);
   const [isPlaying, setIsPlaying] = useState(false);
+  const [editingTranscript, setEditingTranscript] = useState(false);
+  const [draftSegments, setDraftSegments] = useState<TranscriptSegment[]>([]);
+  const [savingTranscript, setSavingTranscript] = useState(false);
+  const [retranscribing, setRetranscribing] = useState(false);
+  const [transcriptMsg, setTranscriptMsg] = useState<string | null>(null);
 
   const audioRef = useRef<HTMLAudioElement | null>(null);
   const segmentRefs = useRef<Record<string, HTMLDivElement | null>>({});
@@ -60,6 +66,9 @@ export const PartnerReview: React.FC<PartnerReviewProps> = ({
     setActiveSegmentId(call.analysis?.critiques[0]?.segmentId ?? null);
     setCurrentTimeSec(0);
     setIsPlaying(false);
+    setEditingTranscript(false);
+    setDraftSegments(call.transcript ?? []);
+    setTranscriptMsg(null);
   }, [call.id]);
 
   function handleSeek(sec: number, critiqueId?: string, segmentId?: string) {
@@ -344,10 +353,148 @@ export const PartnerReview: React.FC<PartnerReviewProps> = ({
             <div className="grid grid-cols-1 lg:grid-cols-12 gap-8 items-start">
               {/* Typeset Transcript */}
               <div className="lg:col-span-7 space-y-1">
-                <div className="font-mono-tabular text-[10px] uppercase tracking-widest text-[var(--ink-tertiary)] mb-3">
-                  Diarized Call Transcript
+                <div className="flex flex-wrap items-center justify-between gap-2 mb-3">
+                  <span className="font-mono-tabular text-[10px] uppercase tracking-widest text-[var(--ink-tertiary)]">
+                    Diarized Call Transcript
+                  </span>
+                  <div className="flex items-center gap-2">
+                    {call.hasAudio && !editingTranscript && (
+                      <button
+                        type="button"
+                        disabled={retranscribing}
+                        onClick={async () => {
+                          setRetranscribing(true);
+                          setTranscriptMsg(null);
+                          try {
+                            await api.retranscribeCall(call.id);
+                            setTranscriptMsg("Re-transcribed from encrypted audio.");
+                            onRefresh();
+                          } catch (err) {
+                            setTranscriptMsg(
+                              err instanceof Error
+                                ? err.message
+                                : "Re-transcription failed."
+                            );
+                          } finally {
+                            setRetranscribing(false);
+                          }
+                        }}
+                        className="px-2 py-1 hairline-box text-[10px] font-mono-tabular uppercase tracking-wider text-[var(--ink-secondary)] hover:text-[var(--ink-primary)] disabled:opacity-50 cursor-pointer"
+                      >
+                        {retranscribing ? "Transcribing…" : "Re-Transcribe Audio"}
+                      </button>
+                    )}
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setDraftSegments(segments);
+                        setEditingTranscript((v) => !v);
+                        setTranscriptMsg(null);
+                      }}
+                      className="px-2 py-1 hairline-box text-[10px] font-mono-tabular uppercase tracking-wider text-[var(--ink-secondary)] hover:text-[var(--ink-primary)] flex items-center gap-1 cursor-pointer"
+                    >
+                      <Edit3 className="w-3 h-3" />
+                      {editingTranscript ? "Cancel Edit" : "Edit Text"}
+                    </button>
+                  </div>
                 </div>
-                {segments.map((seg) => {
+
+                {transcriptMsg && (
+                  <p className="text-[11px] font-mono-tabular text-[var(--sage)] mb-2">
+                    {transcriptMsg}
+                  </p>
+                )}
+
+                {editingTranscript ? (
+                  <div className="space-y-3 p-4 hairline-box bg-[var(--bg-elevated)]">
+                    {draftSegments.map((seg, idx) => (
+                      <div
+                        key={seg.id}
+                        className="p-3 hairline-box bg-[var(--bg-paper)] space-y-2"
+                      >
+                        <div className="flex flex-wrap items-center gap-2">
+                          <input
+                            value={seg.speaker}
+                            onChange={(e) => {
+                              const next = [...draftSegments];
+                              next[idx] = { ...seg, speaker: e.target.value };
+                              setDraftSegments(next);
+                            }}
+                            className="px-2 py-1 bg-[var(--bg-elevated)] hairline-box text-[11px] font-mono-tabular"
+                          />
+                          <select
+                            value={seg.role}
+                            onChange={(e) => {
+                              const next = [...draftSegments];
+                              next[idx] = {
+                                ...seg,
+                                role: e.target.value as TranscriptSegment["role"],
+                              };
+                              setDraftSegments(next);
+                            }}
+                            className="px-2 py-1 bg-[var(--bg-elevated)] hairline-box text-[11px] font-mono-tabular"
+                          >
+                            <option value="investor">investor</option>
+                            <option value="founder">founder</option>
+                            <option value="other">other</option>
+                          </select>
+                          <span className="ml-auto font-mono-tabular text-[11px] text-[var(--ink-tertiary)]">
+                            {formatTime(seg.startSec)}
+                          </span>
+                        </div>
+                        <textarea
+                          rows={3}
+                          value={seg.text}
+                          onChange={(e) => {
+                            const next = [...draftSegments];
+                            next[idx] = { ...seg, text: e.target.value };
+                            setDraftSegments(next);
+                          }}
+                          className="w-full px-2.5 py-1.5 bg-[var(--bg-elevated)] hairline-box text-xs leading-relaxed focus:outline-none"
+                        />
+                      </div>
+                    ))}
+                    <div className="flex flex-wrap justify-end gap-2 pt-2">
+                      <button
+                        type="button"
+                        disabled={savingTranscript}
+                        onClick={async () => {
+                          setSavingTranscript(true);
+                          try {
+                            await api.updateTranscript(call.id, draftSegments);
+                            setEditingTranscript(false);
+                            setTranscriptMsg("Transcript saved.");
+                            onRefresh();
+                          } finally {
+                            setSavingTranscript(false);
+                          }
+                        }}
+                        className="px-3.5 py-2 hairline-box text-[11px] font-mono-tabular uppercase tracking-wider cursor-pointer"
+                      >
+                        Save Text Only
+                      </button>
+                      <button
+                        type="button"
+                        disabled={savingTranscript}
+                        onClick={async () => {
+                          setSavingTranscript(true);
+                          try {
+                            await api.updateTranscript(call.id, draftSegments);
+                            await api.reanalyzeCall(call.id);
+                            setEditingTranscript(false);
+                            onRefresh();
+                          } finally {
+                            setSavingTranscript(false);
+                          }
+                        }}
+                        className="px-4 py-2 bg-[var(--ink-primary)] text-[var(--bg-paper)] text-[11px] font-mono-tabular uppercase tracking-wider cursor-pointer"
+                      >
+                        Save &amp; Re-Run Critics
+                      </button>
+                    </div>
+                  </div>
+                ) : (
+                  segments.map((seg) => {
                   const linkedCritiques = critiquesBySeg.get(seg.id) ?? [];
                   const isFocused = seg.id === activeSegmentId;
                   const isPlayingNow =
@@ -403,7 +550,8 @@ export const PartnerReview: React.FC<PartnerReviewProps> = ({
                       </p>
                     </div>
                   );
-                })}
+                })
+                )}
               </div>
 
               {/* Right Margin Red-Pen Notes */}
