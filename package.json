@@ -1,0 +1,40 @@
+{
+  "name": "redline-partner-desk",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "concurrently -n API,WEB -c cyan,yellow \"tsx watch server/index.ts\" \"vite\"",
+    "build": "vite build && tsc -p tsconfig.server.json",
+    "start": "node dist-server/index.js",
+    "typecheck": "tsc --noEmit && tsc -p tsconfig.server.json --noEmit"
+  },
+  "dependencies": {
+    "@google/genai": "^3.6.1",
+    "cookie-parser": "^1.4.7",
+    "dotenv": "^16.4.7",
+    "express": "^5.1.0",
+    "express-rate-limit": "^7.5.0",
+    "helmet": "^8.1.0",
+    "lucide-react": "^0.483.0",
+    "multer": "^2.5.0",
+    "react": "^19.1.0",
+    "react-dom": "^19.1.0",
+    "zod": "^3.24.2"
+  },
+  "devDependencies": {
+    "@tailwindcss/vite": "^4.1.0",
+    "@types/cookie-parser": "^1.4.8",
+    "@types/express": "^5.0.1",
+    "@types/multer": "^1.4.12",
+    "@types/node": "^22.13.10",
+    "@types/react": "^19.1.0",
+    "@types/react-dom": "^19.1.0",
+    "@vitejs/plugin-react": "^4.4.0",
+    "concurrently": "^9.1.2",
+    "tailwindcss": "^4.1.0",
+    "tsx": "^4.19.3",
+    "typescript": "^5.8.2",
+    "vite": "^6.2.3"
+  }
+}

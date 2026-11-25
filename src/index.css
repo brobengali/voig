@@ -1,0 +1,113 @@
+@import "tailwindcss";
+
+:root {
+  --bg-paper: #f6f2ea;
+  --bg-elevated: #fbf8f3;
+  --bg-muted: #ece6da;
+  --ink-primary: #141311;
+  --ink-secondary: #58544c;
+  --ink-tertiary: #8c867a;
+  --rule-hairline: rgba(20, 19, 17, 0.12);
+  --rule-strong: rgba(20, 19, 17, 0.28);
+  --vermilion: #c9331c;
+  --vermilion-soft: rgba(201, 51, 28, 0.08);
+  --sage: #1e5f43;
+  --sage-soft: rgba(30, 95, 67, 0.09);
+  --amber: #a86414;
+  --amber-soft: rgba(168, 100, 20, 0.09);
+}
+
+[data-theme="obsidian"] {
+  --bg-paper: #0e0e0c;
+  --bg-elevated: #161512;
+  --bg-muted: #1e1d19;
+  --ink-primary: #f1ede4;
+  --ink-secondary: #aba496;
+  --ink-tertiary: #706b60;
+  --rule-hairline: rgba(241, 237, 228, 0.11);
+  --rule-strong: rgba(241, 237, 228, 0.26);
+  --vermilion: #ec553c;
+  --vermilion-soft: rgba(236, 85, 60, 0.13);
+  --sage: #48a87e;
+  --sage-soft: rgba(72, 168, 126, 0.13);
+  --amber: #e2993e;
+  --amber-soft: rgba(226, 153, 62, 0.12);
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html,
+body,
+#root {
+  min-height: 100%;
+  margin: 0;
+  background-color: var(--bg-paper);
+  color: var(--ink-primary);
+  font-family: "Instrument Sans", -apple-system, BlinkMacSystemFont, sans-serif;
+  -webkit-font-smoothing: antialiased;
+  transition: background-color 220ms ease, color 220ms ease;
+}
+
+.font-serif-editorial {
+  font-family: "Newsreader", Georgia, serif;
+}
+
+.font-mono-tabular {
+  font-family: "JetBrains Mono", ui-monospace, monospace;
+  font-variant-numeric: tabular-nums;
+}
+
+.hairline-b {
+  border-bottom: 1px solid var(--rule-hairline);
+}
+
+.hairline-t {
+  border-top: 1px solid var(--rule-hairline);
+}
+
+.hairline-r {
+  border-right: 1px solid var(--rule-hairline);
+}
+
+.hairline-box {
+  border: 1px solid var(--rule-hairline);
+}
+
+.red-underline {
+  text-decoration: underline;
+  text-decoration-color: var(--vermilion);
+  text-decoration-thickness: 1.5px;
+  text-underline-offset: 4px;
+}
+
+@keyframes pulse-dot {
+  0%,
+  100% {
+    opacity: 1;
+    transform: scale(1);
+  }
+  50% {
+    opacity: 0.45;
+    transform: scale(0.85);
+  }
+}
+
+.animate-pulse-dot {
+  animation: pulse-dot 1.8s ease-in-out infinite;
+}
+
+::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
+}
+
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+::-webkit-scrollbar-thumb {
+  background: var(--rule-strong);
+  border-radius: 3px;
+}
